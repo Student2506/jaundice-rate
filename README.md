@@ -45,7 +45,7 @@ python -m pytest text_tools.py
 ```
 
 ```
-python -m pytest main.py --asyncio-mode=auto
+python -m pytest main.py
 ```
 
 # Цели проекта
