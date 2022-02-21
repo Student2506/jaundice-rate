@@ -27,7 +27,9 @@ python -m aiohttp.web -H localhost -P 80 server:init_func
 
 # Отправка запроса
 сделать запрос формата в браузере или другом http-клиенте
+```
 http://127.0.0.1?urls=https://...html
+```
 где https://...html адрес статьи
 
 # Как запустить тесты
