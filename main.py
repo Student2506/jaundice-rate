@@ -69,6 +69,7 @@ async def test_process_article_timeout():
             session, morph, charged_words, url, result, log_result
         )
         assert status in result[0].get('status')
+    await asyncio.sleep(1)      # catch pernding tasks/
 
 
 @contextmanager
