@@ -2,19 +2,22 @@ import asyncio
 import logging
 import os
 import sys
+from contextlib import contextmanager
 from enum import Enum
 from time import monotonic
 
 import aiofiles
 import aiohttp
 import pymorphy2
+import pytest
 from anyio import create_task_group, run
 from async_timeout import timeout
-from contextlib import contextmanager
 
 from adapters.exceptions import ArticleNotFound
 from adapters.inosmi_ru import sanitize
 from text_tools import calculate_jaundice_rate, split_by_words
+
+pytestmark = pytest.mark.anyio
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +25,50 @@ if (sys.version_info[0] == 3 and sys.version_info[1] >= 8 and
         sys.platform.startswith('win')):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-TEST_ARTICLES = [
-    'https://inosmi.ru/20220219/zdorove-253085636.html',
-    'https://inosmi.ru/20220220/sanktsii-253107819.html',
-    'https://inosmi.ru/20220203/koronavirus-252857535.html',
-    'https://inosmi.ru/20220203/mks-252849859.html',
-    'https://inosmi.ru/politic/20190629/245379332.html',
-    'https://inosmi.ru/not/exist.html',
-    'https://lenta.ru/brief/2021/08/26/afg_terror/',
-]
+
 FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 TIMEOUT = 10
+
+
+async def test_process_article():
+    morph = pymorphy2.MorphAnalyzer()
+    charged_words = []
+    log_result = []
+    result = []
+
+    async with aiohttp.ClientSession() as session:
+        url = 'https://inosmi.ru/not/exist.html'
+        status = ProcessingStatus.FETCH_ERROR.value
+        await process_article(
+            session, morph, charged_words, url, result, log_result
+        )
+        assert status in result[0].get('status')
+
+    result = []
+    log_result = []
+    async with aiohttp.ClientSession() as session:
+        url = 'https://lenta.ru/brief/2021/08/26/afg_terror/'
+        status = ProcessingStatus.PARSING_ERROR.value
+        await process_article(
+            session, morph, charged_words, url, result, log_result
+        )
+        assert status in result[0].get('status')
+
+
+async def test_process_article_timeout():
+    global TIMEOUT
+    TIMEOUT = 0.01
+    morph = pymorphy2.MorphAnalyzer()
+    charged_words = []
+    result = []
+    log_result = []
+    async with aiohttp.ClientSession() as session:
+        url = 'https://inosmi.ru/20220219/zdorove-253085636.html'
+        status = ProcessingStatus.TIMEOUT.value
+        await process_article(
+            session, morph, charged_words, url, result, log_result
+        )
+        assert status in result[0].get('status')
 
 
 @contextmanager
@@ -78,10 +114,13 @@ async def process_article(
         words_count = len(words)
     else:
         log_result.append('')
-    final_string = (
-        f'URL: {url}\nСтатус: {status.value}\nРейтинг: {score}\n'
-        f'Слов в статье: {words_count}'
-    )
+
+    final_string = {
+        "status": status.value,
+        "url": url,
+        "score": score,
+        "words_count": words_count
+    }
 
     result.append(final_string)
 
@@ -94,11 +133,15 @@ async def fetch(session, url):
         return await response.text()
 
 
-async def main():
+async def main(*args, **kwargs):
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
+    if len(args) < 1:
+        logger.error('No urls to parse')
+        return
+    urls_to_parse = args[0]
+    results = args[1] if args[1] is not None else []
     morph = pymorphy2.MorphAnalyzer()
     charged_words = []
-    results = []
     log_result = []
     for file_name in os.listdir('charged_dict'):
         async with aiofiles.open(
@@ -109,7 +152,7 @@ async def main():
 
     async with aiohttp.ClientSession() as session:
         async with create_task_group() as tg:
-            for article in TEST_ARTICLES:
+            for article in urls_to_parse:
                 tg.start_soon(
                     process_article,
                     session,
@@ -120,11 +163,11 @@ async def main():
                     log_result
                 )
 
-    # print(''.join(result))
     for result, log in zip(results, log_result):
-        print(result+'\n')
-        if ProcessingStatus.OK.value in result:
+        if ProcessingStatus.OK.value in result.get('status'):
+            logger.info(result.get('url'))
             logger.info(log)
+
 
 if __name__ == '__main__':
     run(main)
