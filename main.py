@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import sys
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from enum import Enum
 from time import monotonic
 
@@ -28,6 +28,17 @@ if (sys.version_info[0] == 3 and sys.version_info[1] >= 8 and
 
 FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 TIMEOUT = 10
+
+
+TEST_ARTICLES = [
+    'https://inosmi.ru/20220219/zdorove-253085636.html',
+    'https://inosmi.ru/20220220/sanktsii-253107819.html',
+    'https://inosmi.ru/20220203/koronavirus-252857535.html',
+    'https://inosmi.ru/20220203/mks-252849859.html',
+    'https://inosmi.ru/politic/20190629/245379332.html',
+    'https://inosmi.ru/not/exist.html',
+    'https://lenta.ru/brief/2021/08/26/afg_terror/',
+]
 
 
 async def test_process_article():
@@ -72,11 +83,13 @@ async def test_process_article_timeout():
     await asyncio.sleep(1)      # catch pernding tasks/
 
 
-@contextmanager
-def estimate_pymorhpy(morph, plain_text, log_result):
+@asynccontextmanager
+async def estimate_pymorhpy(morph, plain_text, log_result):
     start_time = monotonic()
     try:
-        yield split_by_words(morph, plain_text)
+        words = []
+        await split_by_words(morph, plain_text, words)
+        yield words
     finally:
         end_time = monotonic()
     log_result.append(f'Анализ закончен за {(end_time-start_time):.2f} сек\n')
@@ -109,7 +122,7 @@ async def process_article(
     if status == ProcessingStatus.OK:
 
         plain_text = sanitize(html, plaintext=True)
-        with estimate_pymorhpy(morph, plain_text, log_result) as process:
+        async with estimate_pymorhpy(morph, plain_text, log_result) as process:
             words = process
         score = calculate_jaundice_rate(words, charged_words)
         words_count = len(words)
@@ -136,11 +149,12 @@ async def fetch(session, url):
 
 async def main(*args, **kwargs):
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
+    urls_to_parse = None
     if len(args) < 1:
-        logger.error('No urls to parse')
-        return
-    urls_to_parse = args[0]
-    results = args[1] if args[1] is not None else []
+        urls_to_parse = TEST_ARTICLES
+    else:
+        urls_to_parse = args[0]
+    results = args[1] if len(args) > 1 else []
     morph = pymorphy2.MorphAnalyzer()
     charged_words = []
     log_result = []
